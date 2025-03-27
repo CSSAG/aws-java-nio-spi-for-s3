@@ -61,6 +61,7 @@ import software.amazon.awssdk.core.async.AsyncRequestBody;
 import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
+import software.amazon.awssdk.services.s3.model.Bucket;
 import software.amazon.awssdk.services.s3.model.BucketAlreadyExistsException;
 import software.amazon.awssdk.services.s3.model.BucketAlreadyOwnedByYouException;
 import software.amazon.awssdk.services.s3.model.ChecksumAlgorithm;
@@ -96,6 +97,9 @@ public class S3FileSystemProvider extends FileSystemProvider {
      * Constant for the S3 scheme "s3"
      */
     static final String SCHEME = "s3";
+    static final String ACCESSKEYID = "aws.accessKeyId";
+    static final String SECRETACCESSKEY = "aws.secretAccessKey";
+    static final String REGION = "aws.region";
     private static final Map<String, S3FileSystem> FS_CACHE = new ConcurrentHashMap<>();
 
     /**
@@ -108,7 +112,7 @@ public class S3FileSystemProvider extends FileSystemProvider {
      */
     @Deprecated
     protected S3NioSpiConfiguration configuration = new S3NioSpiConfiguration();
-
+    Map<String, Object> envMap;
     private final Logger logger = LoggerFactory.getLogger(this.getClass().getName());
 
     /**
@@ -164,37 +168,39 @@ public class S3FileSystemProvider extends FileSystemProvider {
             throw new IllegalArgumentException("URI scheme must be " + getScheme());
         }
 
-        @SuppressWarnings("unchecked")
-        var envMap = (env != null) ? (Map<String, Object>) env : Collections.<String, Object>emptyMap();
-
-        var info = fileSystemInfo(uri);
-        var config = new S3NioSpiConfiguration().withEndpoint(info.endpoint()).withBucketName(info.bucket());
-        if (info.accessKey() != null) {
-            config.withCredentials(info.accessKey(), info.accessSecret());
-        }
+        this.envMap = (env != null) ? (Map<String, Object>) env : Collections.<String, Object>emptyMap();
+        var info = getFileSystemInfo(uri);
+        var config = getConfig(info);
         var bucketName = config.getBucketName();
 
         try (var client = new S3ClientProvider(config).configureCrtClient().build()) {
-            var createBucketResponse = client.createBucket(
-                    bucketBuilder -> bucketBuilder.bucket(bucketName)
-                            .acl(envMap.getOrDefault("acl", "").toString())
-                            .grantFullControl(envMap.getOrDefault("grantFullControl", "").toString())
-                            .grantRead(envMap.getOrDefault("grantRead", "").toString())
-                            .grantReadACP(envMap.getOrDefault("grantReadACP", "").toString())
-                            .grantWrite(envMap.getOrDefault("grantWrite", "").toString())
-                            .grantWriteACP(envMap.getOrDefault("grantWriteACP", "").toString())
-                            .createBucketConfiguration(confBuilder -> {
-                                if (envMap.containsKey("locationConstraint")) {
-                                    String loc = envMap.get("locationConstraint").toString();
-                                    if (loc.equals(Region.US_EAST_1.id())) {
-                                        loc = null; // us-east-1 is the default (null) location for S3
+            List<Bucket> bucketList = client.listBuckets().get().buckets();
+            boolean bucketExists = false;
+            for (Bucket bucket : bucketList) {
+                if (bucket.name().equals(bucketName)) {
+                    bucketExists = true;
+                    break;
+                }
+            }
+            if (!bucketExists) {
+                var createBucketResponse = client.createBucket(
+                        bucketBuilder -> bucketBuilder.bucket(bucketName).acl(envMap.getOrDefault("acl", "").toString())
+                                .grantFullControl(envMap.getOrDefault("grantFullControl", "").toString())
+                                .grantRead(envMap.getOrDefault("grantRead", "").toString())
+                                .grantReadACP(envMap.getOrDefault("grantReadACP", "").toString())
+                                .grantWrite(envMap.getOrDefault("grantWrite", "").toString())
+                                .grantWriteACP(envMap.getOrDefault("grantWriteACP", "").toString())
+                                .createBucketConfiguration(confBuilder -> {
+                                    if (envMap.containsKey("locationConstraint")) {
+                                        String loc = envMap.get("locationConstraint").toString();
+                                        if (loc.equals(Region.US_EAST_1.id())) {
+                                            loc = null; // us-east-1 is the default (null) location for S3
+                                        }
+                                        confBuilder.locationConstraint(loc);
                                     }
-                                    confBuilder.locationConstraint(loc);
-                                }
-                            })
-            ).get(30, TimeUnit.SECONDS);
-            logger.debug("Create bucket response {}", createBucketResponse.toString());
-
+                                })).get(30, TimeUnit.SECONDS);
+                logger.debug("Create bucket response {}", createBucketResponse.toString());
+            }
         } catch (ExecutionException e) {
             if (e.getCause() instanceof BucketAlreadyOwnedByYouException ||
                     e.getCause() instanceof BucketAlreadyExistsException) {
@@ -247,12 +253,9 @@ public class S3FileSystemProvider extends FileSystemProvider {
      */
     @Override
     public FileSystem getFileSystem(URI uri) {
-        var info = fileSystemInfo(uri);
+        var info = getFileSystemInfo(uri);
         return FS_CACHE.computeIfAbsent(info.key(), (key) -> {
-            var config = new S3NioSpiConfiguration().withEndpoint(info.endpoint()).withBucketName(info.bucket());
-            if (info.accessKey() != null) {
-                config.withCredentials(info.accessKey(), info.accessSecret());
-            }
+            var config = getConfig(info);
             return new S3FileSystem(this, config);
         });
     }
@@ -497,7 +500,11 @@ public class S3FileSystemProvider extends FileSystemProvider {
                 prefixWithSeparator = sourcePrefix;
             } else {
                 sourceKeys = List.of(List.of(ObjectIdentifier.builder().key(sourcePrefix).build()));
-                prefixWithSeparator = sourcePrefix.substring(0, sourcePrefix.lastIndexOf(PATH_SEPARATOR)) + PATH_SEPARATOR;
+                if (sourcePrefix.lastIndexOf(PATH_SEPARATOR) == -1) {
+                    prefixWithSeparator = PATH_SEPARATOR;
+                } else {
+                    prefixWithSeparator = sourcePrefix.substring(0, sourcePrefix.lastIndexOf(PATH_SEPARATOR)) + PATH_SEPARATOR;
+                }
             }
 
             try (var s3TransferManager = S3TransferManager.builder().s3Client(s3Client).build()) {
@@ -1018,6 +1025,31 @@ public class S3FileSystemProvider extends FileSystemProvider {
             }
         };
     }
+
+    private S3NioSpiConfiguration getConfig(S3FileSystemInfo info) {
+        S3NioSpiConfiguration config = new S3NioSpiConfiguration().withEndpoint(info.endpoint()).withBucketName(info.bucket());
+        if (info.accessKey() != null) {
+            config.withCredentials(info.accessKey(), info.accessSecret());
+        }
+        if (info.region() != null) {
+            config.withRegion(info.region());
+        }
+        return config;
+    }
+
+
+    private S3FileSystemInfo getFileSystemInfo(URI uri) {
+        var info = fileSystemInfo(uri);
+        if (envMap.get(ACCESSKEYID) != null) {
+            info.setAccessKey(envMap.get(ACCESSKEYID).toString());
+            info.setAccessSecret(envMap.get(SECRETACCESSKEY).toString());
+        }
+        if (envMap.get(REGION) != null) {
+            info.setRegion(envMap.get(REGION).toString());
+        }
+        return info;
+    }
+
 
     static S3Path checkPath(Path obj) {
         Objects.requireNonNull(obj);
