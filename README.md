@@ -2,7 +2,10 @@
 [![Github All Releases](https://img.shields.io/github/downloads/awslabs/aws-java-nio-spi-for-s3/total.svg)]()
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-# AWS Java NIO SPI for S3
+# AWS Java NIO SPI for S3 for CSS
+
+This Fork exists because we needed a different authorisation. The default one was not usable. 
+We store the credentials in eGECKO and pass them directly to the FileSystemProvider.
 
 A Java NIO.2 service provider for S3, allowing Java NIO operations to be performed on paths using the `s3` scheme. This
 package implements the service provider interface (SPI) defined for Java NIO.2 in JDK 1.7 providing "plug-in" non-blocking
