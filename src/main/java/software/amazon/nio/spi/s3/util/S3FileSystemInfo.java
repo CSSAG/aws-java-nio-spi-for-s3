@@ -26,6 +26,7 @@ public class S3FileSystemInfo {
     protected String bucket;
     protected String accessKey;
     protected String accessSecret;
+    protected String region;
 
     protected S3FileSystemInfo() {
     }
@@ -65,8 +66,24 @@ public class S3FileSystemInfo {
     public String accessKey() {
         return accessKey;
     }
+    
+    public void setAccessKey(String accessKey) {
+        this.accessKey = accessKey;
+    }
 
     public String accessSecret() {
         return accessSecret;
+    }
+
+    public void setAccessSecret(String accessSecret) {
+        this.accessSecret = accessSecret;
+    }
+
+    public void setRegion(String region) {
+        this.region = region;
+    }
+
+    public String region() {
+        return region;
     }
 }
