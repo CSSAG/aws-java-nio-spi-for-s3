@@ -7,6 +7,7 @@ gradle.properties
 # Ignore Gradle build output directory
 build
 bin
+log
 
 # Ignore maven build output
 target
