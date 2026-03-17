@@ -214,11 +214,30 @@ class S3BasicFileAttributes implements BasicFileAttributes {
      * @throws IOException Errors getting the metadata of the object represented by the path are wrapped in IOException
      */
     static S3BasicFileAttributes get(S3Path path, Duration readTimeout) throws IOException {
-        if (path.isDirectory()) {
-            return DIRECTORY_ATTRIBUTES;
-        }
+			String key = path.getKey();
+			if ("/".equals(key) || key.isEmpty()) {
+				return DIRECTORY_ATTRIBUTES;
+			}
 
-        var headResponse = getObjectMetadata(path, readTimeout);
+			HeadObjectResponse headResponse;
+				try {
+					headResponse = getObjectMetadata(path, readTimeout);
+				} catch (NoSuchFileException e) {
+					if (key.length() > 1) {
+						if (key.endsWith("/")) {
+							key = key.substring(0, key.length() - 1);
+						} else {
+							key = key + "/";
+						}
+					}
+
+					headResponse = getObjectMetadata(path.from(key), readTimeout);
+				}
+				//Es gab eine Response, demnach ist das Objekt vorhanden,
+				//allerdings sollte bei einem Ordner andere Attribute zurückgegeben werden.
+				if (key.endsWith("/")) {
+					return DIRECTORY_ATTRIBUTES;
+				}
         return new S3BasicFileAttributes(
             FileTime.from(headResponse.lastModified()),
             headResponse.contentLength(),
@@ -234,17 +253,30 @@ class S3BasicFileAttributes implements BasicFileAttributes {
     ) throws IOException {
         var client = path.getFileSystem().client();
         var bucketName = path.bucketName();
+
+				//if its an directory, try to retrieve any data and return, otherwise, try to get the object
+				//return null is ok, because if it is an directory, the get Method will return DIRECTORY_ATTRIBUTES
+				if (path.getKey().endsWith("/")) {
+					try {
+						boolean found = !client.listObjectsV2(
+								req -> req.bucket(bucketName)
+										.prefix(path.getKey()))
+								.get(timeout.toMillis(), MILLISECONDS).contents().isEmpty();
+						if (found) {
+							return null;
+						}
+						//Ignore notFound and try retrieving Object.
+					} catch (Exception e) {
+						//Ignore Exception and try retrieving Object.
+					}
+				}
+
         try {
             return client.headObject(req -> req
                 .bucket(bucketName)
                 .key(path.getKey())
             ).get(timeout.toMillis(), MILLISECONDS);
         } catch (ExecutionException e) {
-            var errMsg = format(
-                "an '%s' error occurred while obtaining the metadata (for operation getFileAttributes) of '%s'" +
-                    "that was not handled successfully by the S3Client's configured RetryConditions",
-                e.getCause().toString(), path.toUri());
-            logger.error(errMsg);
             var cause = e.getCause();
             if (cause instanceof S3Exception) {
                 var s3e = (S3Exception) cause;
@@ -252,6 +284,11 @@ class S3BasicFileAttributes implements BasicFileAttributes {
                     throw new NoSuchFileException(path.toString());
                 }
             }
+						var errMsg = format(
+								"an '%s' error occurred while obtaining the metadata (for operation getFileAttributes) of '%s'" +
+										"that was not handled successfully by the S3Client's configured RetryConditions",
+								e.getCause().toString(), path.toUri());
+						logger.error(errMsg);
             throw new IOException(errMsg, e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

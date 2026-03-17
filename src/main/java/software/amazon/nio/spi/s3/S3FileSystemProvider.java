@@ -330,6 +330,10 @@ public class S3FileSystemProvider extends FileSystemProvider {
         }
 
         final var s3Path = checkPath(path);
+				if (options.contains(StandardOpenOption.CREATE_NEW)) {
+					advanceCheckExistsAndThrow(s3Path);
+				}
+
         final var fs = s3Path.getFileSystem();
         final var channel = new S3SeekableByteChannel(s3Path, fs.client(), options, fs.integrityCheck());
 
@@ -354,7 +358,7 @@ public class S3FileSystemProvider extends FileSystemProvider {
         var s3Path = checkPath(dir);
 
         var dirName = s3Path.toAbsolutePath().getKey();
-        if (!s3Path.isDirectory()) {
+        if (!s3Path.toString().endsWith(PATH_SEPARATOR)) {
             dirName = dirName + PATH_SEPARATOR;
         }
 
@@ -391,6 +395,8 @@ public class S3FileSystemProvider extends FileSystemProvider {
         if (s3Directory.toString().equals("/") || s3Directory.toString().isEmpty()) {
             throw new FileAlreadyExistsException("Root directory already exists");
         }
+				advanceCheckExistsAndThrow(s3Directory);
+
         var directoryKey = s3Directory.toRealPath(NOFOLLOW_LINKS).getKey();
         if (!directoryKey.endsWith(PATH_SEPARATOR) && !directoryKey.isEmpty()) {
             directoryKey = directoryKey + PATH_SEPARATOR;
@@ -426,15 +432,28 @@ public class S3FileSystemProvider extends FileSystemProvider {
     @Override
     public void delete(Path path) throws IOException {
         final var s3Path = checkPath(path);
-        final var prefix = s3Path.toRealPath(NOFOLLOW_LINKS).getKey();
+        var prefix = s3Path.toRealPath(NOFOLLOW_LINKS).getKey();
         final var bucketName = s3Path.bucketName();
 
         final var s3Client = s3Path.getFileSystem().client();
 
+			BasicFileAttributes attributes;
+				try {
+					// attempt to read attributes
+					attributes = readAttributes(path, BasicFileAttributes.class,  LinkOption.NOFOLLOW_LINKS);
+					// file exists
+				} catch (IOException x) {
+					// does not exist or unable to determine if file exists
+					throw new NoSuchFileException(path.toString());
+				}
+
         var timeOut = configuration.getTimeoutLow();
         final var unit = MINUTES;
         try {
-            var keys = s3Path.isDirectory() ?
+					if (attributes.isDirectory() && !prefix.endsWith(PATH_SEPARATOR)) {
+						prefix = prefix + PATH_SEPARATOR;
+					}
+            var keys = attributes.isDirectory() ?
                     getContainedObjectBatches(s3Client, bucketName, prefix, timeOut, unit)
                     : List.of(List.of(ObjectIdentifier.builder().key(prefix).build()));
 
@@ -495,7 +514,7 @@ public class S3FileSystemProvider extends FileSystemProvider {
 
             List<List<ObjectIdentifier>> sourceKeys;
             String prefixWithSeparator;
-            if (s3SourcePath.isDirectory()) {
+            if (isDirectory(s3SourcePath)) {
                 sourceKeys = getContainedObjectBatches(s3Client, sourceBucket, sourcePrefix, timeOut, unit);
                 prefixWithSeparator = sourcePrefix;
             } else {
@@ -713,7 +732,7 @@ public class S3FileSystemProvider extends FileSystemProvider {
         final CompletableFuture<? extends S3Response> response;
         if (s3Path.equals(s3Path.getRoot())) {
             response = s3Client.headBucket(request -> request.bucket(bucketName));
-        } else if (s3Path.isDirectory()) {
+        } else if (isDirectory(s3Path)) {
             response = s3Client.listObjectsV2(req -> req.bucket(bucketName).prefix(s3Path.getKey()));
         } else {
             response = s3Client.headObject(req -> req.bucket(bucketName).key(s3Path.getKey()));
@@ -798,7 +817,7 @@ public class S3FileSystemProvider extends FileSystemProvider {
         Objects.requireNonNull(attributes);
         var s3Path = checkPath(path);
 
-        if (s3Path.isDirectory() || attributes.trim().isEmpty()) {
+        if (isDirectory(s3Path) || attributes.trim().isEmpty()) {
             return Collections.emptyMap();
         }
 
@@ -894,7 +913,7 @@ public class S3FileSystemProvider extends FileSystemProvider {
     }
 
     private void closeFileSystemIfOpen(FileSystem fs) throws IOException {
-        if (fs.isOpen()) {
+        if (fs != null && fs.isOpen()) {
             fs.close();
         }
     }
@@ -912,6 +931,21 @@ public class S3FileSystemProvider extends FileSystemProvider {
             return false;
         }
     }
+
+		void advanceCheckExistsAndThrow(S3Path path) throws IOException {
+			try {
+				// attempt to read attributes
+				BasicFileAttributes attributes = readAttributes(path, BasicFileAttributes.class,  LinkOption.NOFOLLOW_LINKS);
+				// file exists
+				String type = "File";
+				if (attributes.isDirectory()) {
+					type = "Directory";
+				}
+				throw new FileAlreadyExistsException(type + " with the name already exists: " + path);
+			} catch (NoSuchFileException x) {
+				// File does not exists, therefore ok.
+			}
+		}
 
     /**
      * This method parses the provided URI into elements useful to address
@@ -989,7 +1023,7 @@ public class S3FileSystemProvider extends FileSystemProvider {
         final var sanitizedIdKey = sourceObjectIdentifierKey.replaceFirst(sourcePrefix, "");
 
         // should resolve if the target path is a dir
-        if (targetPath.isDirectory()) {
+        if (isDirectory(targetPath)) {
             targetPath = targetPath.resolve(sanitizedIdKey);
         }
 
@@ -1027,7 +1061,7 @@ public class S3FileSystemProvider extends FileSystemProvider {
     }
 
     private S3NioSpiConfiguration getConfig(S3FileSystemInfo info) {
-        S3NioSpiConfiguration config = new S3NioSpiConfiguration().withEndpoint(info.endpoint()).withBucketName(info.bucket());
+        S3NioSpiConfiguration config = new S3NioSpiConfiguration().withEndpoint(info.endpoint()).withBucketName(info.bucket()).withEndpointProtocol("http");
         if (info.accessKey() != null) {
             config.withCredentials(info.accessKey(), info.accessSecret());
         }
@@ -1058,4 +1092,12 @@ public class S3FileSystemProvider extends FileSystemProvider {
         }
         return (S3Path) obj;
     }
+
+	boolean isDirectory(Path path) {
+			try {
+				return readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).isDirectory();
+			} catch (IOException e) {
+				return false;
+			}
+	}
 }

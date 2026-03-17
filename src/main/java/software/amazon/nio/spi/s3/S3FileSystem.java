@@ -519,7 +519,7 @@ public class S3FileSystem extends FileSystem {
      * @return new local temporary file
      */
     Path createTempFile(S3Path path) throws IOException {
-        if (path.isDirectory()) {
+        if (path.getKey().endsWith("/") || path.getKey().isEmpty() || provider.isDirectory(path)) {
             throw new IllegalArgumentException("path must be a file");
         }
         String filename = path.getFileName().toString();
