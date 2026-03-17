@@ -1061,7 +1061,7 @@ public class S3FileSystemProvider extends FileSystemProvider {
     }
 
     private S3NioSpiConfiguration getConfig(S3FileSystemInfo info) {
-        S3NioSpiConfiguration config = new S3NioSpiConfiguration().withEndpoint(info.endpoint()).withBucketName(info.bucket()).withEndpointProtocol("http");
+        S3NioSpiConfiguration config = new S3NioSpiConfiguration().withEndpoint(info.endpoint()).withBucketName(info.bucket());
         if (info.accessKey() != null) {
             config.withCredentials(info.accessKey(), info.accessSecret());
         }
