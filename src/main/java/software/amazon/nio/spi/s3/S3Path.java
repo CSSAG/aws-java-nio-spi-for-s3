@@ -176,14 +176,17 @@ class S3Path implements Path {
      */
     @Override
     public S3Path getParent() {
-        var size = pathRepresentation.elements().size();
-        if (this.equals(getRoot()) || size < 1) {
-            return null;
-        }
-        if (pathRepresentation.isAbsolute() && size == 1) {
-            return getRoot();
-        }
-        return subpath(0, getNameCount() - 1);
+			var size = pathRepresentation.elements().size();
+
+			if (size == 0) {
+				return null;
+			}
+
+			if (size == 1) {
+				return isAbsolute() ? getRoot() : null;
+			}
+
+			return subpath(0, getNameCount() - 1);
     }
 
     /**
@@ -286,11 +289,28 @@ class S3Path implements Path {
      */
     @Override
     public boolean startsWith(Path other) {
-        return this.equals(other) ||
-            this.fileSystem.equals(other.getFileSystem()) &&
-                this.isAbsolute() == other.isAbsolute() &&
-                this.getNameCount() >= other.getNameCount() &&
-                this.subpath(0, other.getNameCount()).equals(other);
+			if (!this.fileSystem.equals(other.getFileSystem())) {
+				return false;
+			}
+
+			if (this.isAbsolute() != other.isAbsolute()) {
+				return false;
+			}
+
+			if (other.getNameCount() > this.getNameCount()) {
+				return false;
+			}
+
+			for (int i = 0; i < other.getNameCount(); i++) {
+				String a = normalizeName(this.getName(i));
+				String b = normalizeName(other.getName(i));
+
+				if (!a.equals(b)) {
+					return false;
+				}
+			}
+
+			return true;
     }
 
     /**
@@ -332,10 +352,31 @@ class S3Path implements Path {
      */
     @Override
     public boolean endsWith(Path other) {
-        return this.equals(other) ||
-            this.fileSystem == other.getFileSystem() &&
-                this.getNameCount() >= other.getNameCount() &&
-                this.subpath(this.getNameCount() - other.getNameCount(), this.getNameCount()).equals(other);
+			if (!this.fileSystem.equals(other.getFileSystem())) {
+				return false;
+			}
+
+			if (other.isAbsolute()) {
+				return this.equals(other);
+			}
+
+			int otherCount = other.getNameCount();
+			int thisCount = this.getNameCount();
+
+			if (otherCount > thisCount) {
+				return false;
+			}
+
+			for (int i = 1; i <= otherCount; i++) {
+				String a = normalizeName(this.getName(thisCount - i));
+				String b = normalizeName(other.getName(otherCount - i));
+
+				if (!a.equals(b)) {
+					return false;
+				}
+			}
+
+			return true;
     }
 
     /**
@@ -382,7 +423,7 @@ class S3Path implements Path {
             return this;
         }
 
-        var directory = pathRepresentation.isDirectory();
+        var directory = isDirectory();
 
         final var elements = pathRepresentation.elements();
         final var realElements = new LinkedList<String>();
@@ -410,6 +451,17 @@ class S3Path implements Path {
         }
         return S3Path.getPath(fileSystem, String.join(PATH_SEPARATOR, realElements));
     }
+
+	/**
+	 * Normalizes the given file path by removing a trailing forward slash, if present.
+	 *
+	 * @param name the path to be normalized
+	 * @return the normalized path as a string without a trailing forward slash
+	 */
+	private String normalizeName(Path name) {
+		String s = name.toString();
+		return s.endsWith("/") ? s.substring(0, s.length() - 1) : s;
+	}
 
     /**
      * Resolve the given path against this path.
@@ -486,7 +538,8 @@ class S3Path implements Path {
      */
     @Override
     public S3Path resolveSibling(Path other) {
-        return getParent().resolve(other);
+				var parent = getParent();
+        return parent == null ? (S3Path) other : parent.resolve(other);
     }
 
     /**
@@ -501,7 +554,8 @@ class S3Path implements Path {
      */
     @Override
     public S3Path resolveSibling(String other) {
-        return getParent().resolve(other);
+			var parent = getParent();
+			return parent == null ? from(other) : parent.resolve(other);
     }
 
     /**
@@ -671,7 +725,7 @@ class S3Path implements Path {
                 if (name.endsWith(PATH_SEPARATOR)) {
                     name = name.substring(0, name.length() - 1);
                 }
-                uri.append(PATH_SEPARATOR).append(URLEncoder.encode(name, StandardCharsets.UTF_8));
+                uri.append(PATH_SEPARATOR).append(URLEncoder.encode(name, StandardCharsets.UTF_8).replace("+", "%20"));
             }
         );
         if (isDirectory()) {

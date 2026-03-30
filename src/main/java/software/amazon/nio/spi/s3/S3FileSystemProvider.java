@@ -894,7 +894,7 @@ public class S3FileSystemProvider extends FileSystemProvider {
     }
 
     private void closeFileSystemIfOpen(FileSystem fs) throws IOException {
-        if (fs.isOpen()) {
+        if (fs != null && fs.isOpen()) {
             fs.close();
         }
     }
