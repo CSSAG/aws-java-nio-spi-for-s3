@@ -725,6 +725,10 @@ class S3Path implements Path {
                 if (name.endsWith(PATH_SEPARATOR)) {
                     name = name.substring(0, name.length() - 1);
                 }
+				// URLEncoder encodes spaces as '+' by default (application/x-www-form-urlencoded).
+				// When decoding in non-form contexts (e.g., URL path segments), '+' is not always
+				// interpreted as a space and may remain a literal '+'.
+				// Therefore, '+' is replaced with '%20' to ensure it is reliably decoded back to a space.
                 uri.append(PATH_SEPARATOR).append(URLEncoder.encode(name, StandardCharsets.UTF_8).replace("+", "%20"));
             }
         );
