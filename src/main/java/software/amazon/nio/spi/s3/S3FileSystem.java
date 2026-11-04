@@ -545,7 +545,11 @@ public class S3FileSystem extends FileSystem {
                 : newPath;
             return Files.createFile(newPath);
         }
-        Path parent = temporaryDirectory.resolve(path.getParent().toString());
+        // Derive the local directory from the object key (not path.getParent(), which may be absolute)
+        // so the temp file always lives under temporaryDirectory (see issue #772).
+        var key = path.getKey();
+        var lastSeparator = key.lastIndexOf(PATH_SEPARATOR);
+        Path parent = lastSeparator > 0 ? temporaryDirectory.resolve(key.substring(0, lastSeparator)) : temporaryDirectory;
         Files.createDirectories(parent);
         Path newPath = parent.resolve(filename);
         newPath = Files.exists(newPath)
