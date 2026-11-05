@@ -186,7 +186,10 @@ class S3Path implements Path {
 				return isAbsolute() ? getRoot() : null;
 			}
 
-			return subpath(0, getNameCount() - 1);
+			var parent = subpath(0, getNameCount() - 1);
+			// subpath always returns a relative path; the parent of an absolute path must remain
+			// absolute (see https://github.com/awslabs/aws-java-nio-spi-for-s3/issues/772).
+			return isAbsolute() ? parent.toAbsolutePath() : parent;
     }
 
     /**
